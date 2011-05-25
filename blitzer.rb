@@ -2,9 +2,16 @@
 # http://www.mudynamics.com
 # Making load and performance testing a fun sport!
 
-require 'rubygems'
-require 'blitz'
-require 'heroku'
+begin
+  require 'rubygems'
+  require 'blitz'
+  require 'heroku'
+rescue Exception
+  puts 'Blitzer requires the following gems to be installed:'
+  puts 'blitz'
+  puts 'heroku'
+  exit
+end
 
 class Blitzer
     ERROR_TOLERANCE = 2 # percentage of errors
