@@ -1,3 +1,5 @@
+#!/usr/bin/env ruby
+
 # http://blitz.io
 # http://www.mudynamics.com
 # Making load and performance testing a fun sport!
