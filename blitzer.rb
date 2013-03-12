@@ -6,12 +6,14 @@
 
 begin
   require 'rubygems'
+  gem 'blitz', "~> 0.1.29"
+  gem "heroku-api", "~> 0.3.8"
   require 'blitz'
-  require 'heroku'
+  require 'heroku-api'
 rescue Exception
   puts 'Blitzer requires the following gems to be installed:'
   puts 'blitz'
-  puts 'heroku'
+  puts 'heroku-api'
   exit
 end
 
@@ -21,11 +23,13 @@ class Blitzer
     attr_reader :heroku
     attr_reader :app
     attr_reader :target
+    attr_reader :path
     
     def initialize opts
-        @heroku = Heroku::Client.new opts[:user], opts[:pass]
+        @heroku = Heroku::API.new :user => opts[:user], :api_key => opts[:pass]
         @app    = opts[:app]
         @target = opts[:target]
+        @path = opts[:path]
     end
     
     # Kick off the number of dynos and wait until all those are up. We do
@@ -33,12 +37,19 @@ class Blitzer
     def set_dynos qty
         progress "starting #{qty} dyno(s) "
 
-        heroku.set_dynos app, qty
+        heroku.post_ps_scale app, 'web', qty
+        # heroku.set_dynos app, qty
         while true
             progress "."
             sleep 1.0
-            dynos = heroku.ps(app)            
-            break if dynos.size == qty and dynos.all? { |d| d['state'] == 'up' }
+            dynos = heroku.get_ps(app).body
+            web_synos = []
+            dynos.each do |dyno|
+                if dyno["process"].to_s.match(/^web/) != nil && (dyno["state"] == "up" || dyno["state"] == "idle")
+                    web_synos << dyno
+                end
+            end
+            break if web_synos.size == qty
         end
         
         progress "done\n"
@@ -52,20 +63,15 @@ class Blitzer
             # we receive something other than 200 Okay during the load test.
             # And Heroku generates a 500 error when this happens so it allows
             # us to detect that the app crashed.
-            opts = {
-                :region => 'virginia',
-                :url => "http://#{app}.heroku.com",
-                :pattern => {
-                    :intervals => [{
-                    :start => 1,
-                    :end => target,
-                    :duration => 30
-                    }]
-                },
-                :status => 200
-            }
-            progress "  rushing "
-            status = Blitz::Curl::Rush.execute(opts) do |s|
+            opts = []
+            opts << "-r virginia"
+            opts << "-p 10-#{target}:30"
+
+            url = "http://#{app}.herokuapp.com#{path}"
+            opts << url
+
+            progress "  rushing... #{url}\n"
+            status = Blitz::Curl.parse(opts.join(" ")).execute do |s|
                 progress "."
                 last = s.timeline[-1]
                 
@@ -88,13 +94,13 @@ class Blitzer
             percent_errors = 100 - (last.hits * 100 / last.total)
             if percent_errors < ERROR_TOLERANCE
                 progress "done\n\n"
-                progress ">> You need #{dyno} dyno(s) to handle 1,000 concurrent users!\n\n"
+                progress ">> You need #{dyno} dyno(s) to handle #{target} concurrent users!\n\n"
                 break
             end
         end
         
         # Reset the dynos back to 1
-        heroku.set_dynos app, 1
+        heroku.post_ps_scale app, 'web', 1
     end
     
     def progress text
@@ -109,6 +115,7 @@ if ARGV.size < 3
     puts "pass   - Heroku API key (from the accounts page)"
     puts "app    - The name of your heroku app"
     puts "target - How many users do you want to get to? default = 1000"
+    puts "path   - What URL path to be added to the request? eg. /path?var=value | default = ''"
     exit 1
 end
 
@@ -117,6 +124,7 @@ opts[:user]   = ARGV.shift
 opts[:pass]   = ARGV.shift
 opts[:app]    = ARGV.shift
 opts[:target] = (ARGV.shift || 1000).to_i
+opts[:path]   = (ARGV.shift || "")
 
 puts "Blitzing http://#{opts[:app]}.heroku.com with a target of #{opts[:target]} users"
 puts
